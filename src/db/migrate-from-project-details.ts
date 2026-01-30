@@ -51,6 +51,12 @@ interface DetailResult {
   maxTenderBudget?: number;
   awardedTenderBudget?: number;
   tenderQuoteDueAt?: string;
+  /** API may provide award date; otherwise we use earliest stage constructionStartDate */
+  awardedAt?: string;
+  tenderAwardedAt?: string;
+  /** Distance (e.g. from search center); may be number or in km */
+  distance?: number;
+  distanceKm?: number;
   stages?: DetailStage[];
 }
 
@@ -274,6 +280,26 @@ export async function buildTablesFromProjectDetails(limit?: number): Promise<{ p
             ? String(detail.minTenderBudget)
             : null;
 
+    const stages = detail.stages ?? [];
+    const earliestStart = stages.reduce<string | null>((acc, s) => {
+      const d = s.constructionStartDate ? parseDate(s.constructionStartDate) : null;
+      if (!d) return acc;
+      return acc == null || d < acc ? d : acc;
+    }, null);
+    const awardedDate =
+      detail.awardedAt != null
+        ? parseDate(detail.awardedAt)
+        : detail.tenderAwardedAt != null
+          ? parseDate(detail.tenderAwardedAt)
+          : earliestStart;
+
+    const distance =
+      detail.distanceKm != null
+        ? Number(detail.distanceKm)
+        : detail.distance != null
+          ? Number(detail.distance)
+          : undefined;
+
     await projectService.upsertProject({
       project_id: projectId,
       name: detail.name ?? 'Unnamed Project',
@@ -282,14 +308,14 @@ export async function buildTablesFromProjectDetails(limit?: number): Promise<{ p
       postcode: postcode ?? undefined,
       state: state ?? undefined,
       category: detail.stageCategory ?? detail.stageCategoryName ?? undefined,
-      distance: undefined,
+      awarded_date: awardedDate ?? undefined,
+      distance,
       budget: budgetStr ?? undefined,
       quotes_due_date: detail.tenderQuoteDueAt ? parseDate(detail.tenderQuoteDueAt) ?? undefined : undefined,
       country: 'AU',
     });
     projectsCount++;
 
-    const stages = detail.stages ?? [];
     const seenProjectContactKeys = new Set<string>();
 
     for (const stage of stages) {
