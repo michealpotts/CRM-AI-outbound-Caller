@@ -7,34 +7,28 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================================
--- Projects Table
--- Source of truth for all projects from scraped data
+-- CRM Projects Table
+-- Normalized and CRM-managed projects (separate from raw scraped projects table)
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS projects (
+CREATE TABLE IF NOT EXISTS crm_projects (
     -- Primary key (internal)
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     
     -- External identifier (unique, used for idempotency)
     project_id VARCHAR(255) NOT NULL UNIQUE,
     
-    -- Project details
-    project_name VARCHAR(500) NOT NULL,
-    
-    -- Address fields
-    address_line1 VARCHAR(500),
-    address_line2 VARCHAR(500),
-    city VARCHAR(255),
+    -- Project details (aligned with HubSpot/CSV)
+    name VARCHAR(500) NOT NULL,
+    address VARCHAR(500),
+    suburb VARCHAR(255),
+    postcode VARCHAR(50),
     state VARCHAR(100),
-    zip_code VARCHAR(50),
-    country VARCHAR(100) DEFAULT 'US',
-    
-    -- Project metadata
+    category VARCHAR(255),
     awarded_date DATE,
-    source_platform VARCHAR(255),
-    is_multi_package BOOLEAN DEFAULT false,
-    project_status VARCHAR(100),
-    painting_package_status VARCHAR(100),
-    priority_score INTEGER DEFAULT 0,
+    distance DECIMAL(12, 4),
+    budget VARCHAR(255),
+    quotes_due_date DATE,
+    country VARCHAR(100) DEFAULT 'AU',
     
     -- Call management
     last_contacted_at TIMESTAMP WITH TIME ZONE,
@@ -45,79 +39,57 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     
-    -- Indexes for performance
-    CONSTRAINT projects_project_id_key UNIQUE (project_id)
+    CONSTRAINT crm_projects_project_id_key UNIQUE (project_id)
 );
 
-CREATE INDEX idx_projects_project_id ON projects(project_id);
-CREATE INDEX idx_projects_next_call_eligible_at ON projects(next_call_eligible_at) WHERE call_suppressed = false;
-CREATE INDEX idx_projects_call_suppressed ON projects(call_suppressed);
-CREATE INDEX idx_projects_priority_score ON projects(priority_score DESC);
+CREATE INDEX idx_crm_projects_project_id ON crm_projects(project_id);
+CREATE INDEX idx_crm_projects_next_call_eligible_at ON crm_projects(next_call_eligible_at) WHERE call_suppressed = false;
+CREATE INDEX idx_crm_projects_call_suppressed ON crm_projects(call_suppressed);
 
 -- ============================================================================
 -- Contacts Table
--- Source of truth for all contacts
+-- Source of truth for all contacts (aligned with HubSpot/CSV)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS contacts (
-    -- Primary key (internal)
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
-    -- External identifier (nullable, used when available from source)
     contact_id VARCHAR(255),
-    
-    -- Contact details
     name VARCHAR(500) NOT NULL,
-    phone VARCHAR(50),
     email VARCHAR(255),
-    
-    -- Contact preferences and metadata
+    companyname VARCHAR(500),
+    phonenumber VARCHAR(50),
     global_role VARCHAR(100),
     authority_level VARCHAR(100),
-    preferred_channel VARCHAR(50), -- 'phone', 'email', 'sms'
+    preferred_channel VARCHAR(50),
     do_not_call BOOLEAN DEFAULT false,
-    
-    -- Audit fields
+    last_ai_contact TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    
-    -- Natural key for deduplication (phone or email)
-    -- Note: We'll use application-level logic for phone/email dedupe
 );
 
--- Unique index for contact_id (only when not null)
 CREATE UNIQUE INDEX idx_contacts_contact_id_unique ON contacts(contact_id) WHERE contact_id IS NOT NULL;
 CREATE INDEX idx_contacts_contact_id ON contacts(contact_id) WHERE contact_id IS NOT NULL;
-CREATE INDEX idx_contacts_phone ON contacts(phone) WHERE phone IS NOT NULL;
+CREATE INDEX idx_contacts_phonenumber ON contacts(phonenumber) WHERE phonenumber IS NOT NULL;
 CREATE INDEX idx_contacts_email ON contacts(email) WHERE email IS NOT NULL;
 CREATE INDEX idx_contacts_do_not_call ON contacts(do_not_call);
 
 -- ============================================================================
 -- ProjectContact Junction Table
--- Associates contacts with projects and their roles
+-- project_id = crm_projects.project_id (external), contact_id = contacts.contact_id (external)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS project_contacts (
-    -- Primary key (internal)
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
-    -- Foreign keys
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    
-    -- Role information
+    project_id VARCHAR(255) NOT NULL REFERENCES crm_projects(project_id) ON DELETE CASCADE,
+    contact_id VARCHAR(255) NOT NULL,
     role_for_project VARCHAR(100),
-    role_confidence DECIMAL(3, 2), -- 0.00 to 1.00
+    role_confidence DECIMAL(3, 2),
+    est_start_date DATE,
+    est_end_date DATE,
     role_confirmed BOOLEAN DEFAULT false,
-    
-    -- Project-specific preferences
     preferred_channel_project VARCHAR(50),
     last_contacted_at TIMESTAMP WITH TIME ZONE,
     suppress_for_project BOOLEAN DEFAULT false,
-    
-    -- Audit fields
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Ensure one contact-project relationship per combination
     CONSTRAINT project_contacts_unique UNIQUE (project_id, contact_id)
 );
 
@@ -137,7 +109,7 @@ CREATE TABLE IF NOT EXISTS call_sessions (
     call_session_id VARCHAR(255),
     
     -- Foreign keys
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    project_id UUID NOT NULL REFERENCES crm_projects(id) ON DELETE RESTRICT,
     contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
     
     -- Call metadata
@@ -187,7 +159,7 @@ CREATE TABLE IF NOT EXISTS terminal_sessions (
     
     -- Scope: what this terminal session applies to
     scope VARCHAR(50) NOT NULL, -- 'project', 'contact', 'global'
-    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES crm_projects(id) ON DELETE CASCADE,
     contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
     
     -- Terminal state details
@@ -235,7 +207,7 @@ END;
 $$ language 'plpgsql';
 
 -- Apply triggers to tables with updated_at
-CREATE TRIGGER update_projects_updated_at BEFORE UPDATE ON projects
+CREATE TRIGGER update_crm_projects_updated_at BEFORE UPDATE ON crm_projects
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_contacts_updated_at BEFORE UPDATE ON contacts

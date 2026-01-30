@@ -24,7 +24,7 @@ export class ProjectService {
       
       // Check if project exists by external project_id
       const existingResult = await client.query(
-        'SELECT id FROM projects WHERE project_id = $1',
+        'SELECT id FROM crm_projects WHERE project_id = $1',
         [project.project_id]
       );
       
@@ -36,11 +36,9 @@ export class ProjectService {
         
         // Build dynamic update query
         const fieldsToUpdate: (keyof Project)[] = [
-          'project_name', 'address_line1', 'address_line2', 'city', 'state',
-          'zip_code', 'country', 'awarded_date', 'source_platform',
-          'is_multi_package', 'project_status', 'painting_package_status',
-          'priority_score', 'last_contacted_at', 'next_call_eligible_at',
-          'call_suppressed'
+          'name', 'address', 'suburb', 'postcode', 'state', 'category',
+          'awarded_date', 'distance', 'budget', 'quotes_due_date', 'country',
+          'last_contacted_at', 'next_call_eligible_at', 'call_suppressed'
         ];
         
         for (const field of fieldsToUpdate) {
@@ -54,7 +52,7 @@ export class ProjectService {
         values.push(project.project_id);
         
         const updateQuery = `
-          UPDATE projects
+          UPDATE crm_projects
           SET ${updateFields.join(', ')}
           WHERE project_id = $${paramIndex}
           RETURNING *
@@ -66,32 +64,29 @@ export class ProjectService {
       } else {
         // Insert new project
         const insertQuery = `
-          INSERT INTO projects (
-            project_id, project_name, address_line1, address_line2, city, state,
-            zip_code, country, awarded_date, source_platform, is_multi_package,
-            project_status, painting_package_status, priority_score,
+          INSERT INTO crm_projects (
+            project_id, name, address, suburb, postcode, state, category,
+            awarded_date, distance, budget, quotes_due_date, country,
             last_contacted_at, next_call_eligible_at, call_suppressed
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
           )
           RETURNING *
         `;
         
         const result = await client.query(insertQuery, [
           project.project_id,
-          project.project_name,
-          project.address_line1 || null,
-          project.address_line2 || null,
-          project.city || null,
+          project.name,
+          project.address || null,
+          project.suburb || null,
+          project.postcode || null,
           project.state || null,
-          project.zip_code || null,
-          project.country || 'US',
+          project.category || null,
           project.awarded_date || null,
-          project.source_platform || null,
-          project.is_multi_package || false,
-          project.project_status || null,
-          project.painting_package_status || null,
-          project.priority_score || 0,
+          project.distance ?? null,
+          project.budget || null,
+          project.quotes_due_date || null,
+          project.country || 'AU',
           project.last_contacted_at || null,
           project.next_call_eligible_at || null,
           project.call_suppressed || false,
@@ -113,7 +108,7 @@ export class ProjectService {
    */
   async getProjectByExternalId(projectId: string): Promise<Project | null> {
     const result = await query(
-      'SELECT * FROM projects WHERE project_id = $1',
+      'SELECT * FROM crm_projects WHERE project_id = $1',
       [projectId]
     );
     
@@ -129,7 +124,7 @@ export class ProjectService {
    */
   async getProjectById(id: string): Promise<Project | null> {
     const result = await query(
-      'SELECT * FROM projects WHERE id = $1',
+      'SELECT * FROM crm_projects WHERE id = $1',
       [id]
     );
     
@@ -145,7 +140,7 @@ export class ProjectService {
    */
   async updateCallSuppression(projectId: string, suppressed: boolean): Promise<void> {
     await query(
-      'UPDATE projects SET call_suppressed = $1 WHERE project_id = $2',
+      'UPDATE crm_projects SET call_suppressed = $1 WHERE project_id = $2',
       [suppressed, projectId]
     );
   }
@@ -155,7 +150,7 @@ export class ProjectService {
    */
   async updateNextCallEligibleAt(projectId: string, eligibleAt: Date): Promise<void> {
     await query(
-      'UPDATE projects SET next_call_eligible_at = $1 WHERE project_id = $2',
+      'UPDATE crm_projects SET next_call_eligible_at = $1 WHERE project_id = $2',
       [eligibleAt, projectId]
     );
   }
@@ -165,7 +160,7 @@ export class ProjectService {
    */
   async updateLastContactedAt(projectId: string, contactedAt: Date): Promise<void> {
     await query(
-      'UPDATE projects SET last_contacted_at = $1 WHERE project_id = $2',
+      'UPDATE crm_projects SET last_contacted_at = $1 WHERE project_id = $2',
       [contactedAt, projectId]
     );
   }
@@ -177,19 +172,17 @@ export class ProjectService {
     return {
       id: row.id,
       project_id: row.project_id,
-      project_name: row.project_name,
-      address_line1: row.address_line1,
-      address_line2: row.address_line2,
-      city: row.city,
+      name: row.name,
+      address: row.address,
+      suburb: row.suburb,
+      postcode: row.postcode,
       state: row.state,
-      zip_code: row.zip_code,
-      country: row.country,
+      category: row.category,
       awarded_date: row.awarded_date,
-      source_platform: row.source_platform,
-      is_multi_package: row.is_multi_package,
-      project_status: row.project_status,
-      painting_package_status: row.painting_package_status,
-      priority_score: row.priority_score,
+      distance: row.distance != null ? parseFloat(row.distance) : undefined,
+      budget: row.budget,
+      quotes_due_date: row.quotes_due_date,
+      country: row.country,
       last_contacted_at: row.last_contacted_at,
       next_call_eligible_at: row.next_call_eligible_at,
       call_suppressed: row.call_suppressed,

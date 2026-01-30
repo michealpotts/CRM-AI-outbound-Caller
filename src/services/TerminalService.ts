@@ -46,7 +46,7 @@ export class TerminalService {
       
       if (session.scope === 'project' && session.project_id) {
         const projectResult = await query(
-          'SELECT id FROM projects WHERE project_id = $1',
+          'SELECT id FROM crm_projects WHERE project_id = $1',
           [session.project_id]
         );
         if (projectResult.rows.length > 0) {

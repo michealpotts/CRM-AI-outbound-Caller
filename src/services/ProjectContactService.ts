@@ -8,11 +8,11 @@ import { ProjectContact } from '../types';
 export class ProjectContactService {
   /**
    * Upsert project-contact association
-   * Uses (project_id, contact_id) as unique key for idempotency
+   * project_id = crm_projects.project_id (external), contact_id = contacts.contact_id (external)
    */
   async upsertProjectContact(
-    projectId: string, // Internal UUID
-    contactId: string, // Internal UUID
+    projectId: string, // crm_projects.project_id (external)
+    contactId: string, // contacts.contact_id (external)
     data: Partial<ProjectContact>
   ): Promise<ProjectContact> {
     const client = await getClient();
@@ -33,8 +33,8 @@ export class ProjectContactService {
         let paramIndex = 1;
         
         const fieldsToUpdate: (keyof ProjectContact)[] = [
-          'role_for_project', 'role_confidence', 'role_confirmed',
-          'preferred_channel_project', 'last_contacted_at', 'suppress_for_project'
+          'role_for_project', 'role_confidence', 'est_start_date', 'est_end_date',
+          'role_confirmed', 'preferred_channel_project', 'last_contacted_at', 'suppress_for_project'
         ];
         
         for (const field of fieldsToUpdate) {
@@ -62,10 +62,10 @@ export class ProjectContactService {
         const insertQuery = `
           INSERT INTO project_contacts (
             project_id, contact_id, role_for_project, role_confidence,
-            role_confirmed, preferred_channel_project, last_contacted_at,
-            suppress_for_project
+            est_start_date, est_end_date, role_confirmed, preferred_channel_project,
+            last_contacted_at, suppress_for_project
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
           )
           RETURNING *
         `;
@@ -74,11 +74,13 @@ export class ProjectContactService {
           projectId,
           contactId,
           data.role_for_project || null,
-          data.role_confidence || null,
-          data.role_confirmed || false,
+          data.role_confidence ?? null,
+          data.est_start_date || null,
+          data.est_end_date || null,
+          data.role_confirmed ?? false,
           data.preferred_channel_project || null,
           data.last_contacted_at || null,
-          data.suppress_for_project || false,
+          data.suppress_for_project ?? false,
         ]);
         
         await client.query('COMMIT');
@@ -125,7 +127,9 @@ export class ProjectContactService {
       project_id: row.project_id,
       contact_id: row.contact_id,
       role_for_project: row.role_for_project,
-      role_confidence: row.role_confidence ? parseFloat(row.role_confidence) : undefined,
+      role_confidence: row.role_confidence != null ? parseFloat(row.role_confidence) : undefined,
+      est_start_date: row.est_start_date,
+      est_end_date: row.est_end_date,
       role_confirmed: row.role_confirmed,
       preferred_channel_project: row.preferred_channel_project,
       last_contacted_at: row.last_contacted_at,

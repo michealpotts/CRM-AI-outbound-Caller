@@ -4,12 +4,12 @@
   "description": "Production-ready backend for AI outbound calling + CRM system",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "node node_modules/typescript/bin/tsc",
+    "dev": "node -r ts-node/register src/index.ts",
+    "dev:watch": "node --watch -r ts-node/register src/index.ts",
     "start": "node dist/index.js",
     "migrate": "node -r ts-node/register src/db/migrate.ts",
-    "migrate:create": "node -r ts-node/register src/db/create-migration.ts",
-    "test:db": "node -r ts-node/register src/db/test-connection.ts"
+    "migrate:project-details": "node -r ts-node/register src/db/migrate-from-project-details.ts"
   },
   "keywords": ["crm", "ai", "calling", "backend"],
   "author": "",

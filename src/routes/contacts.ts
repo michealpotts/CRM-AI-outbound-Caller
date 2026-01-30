@@ -11,12 +11,14 @@ const contactService = new ContactService();
 const ContactSchema = z.object({
   contact_id: z.string().optional(),
   name: z.string(),
-  phone: z.string().optional(),
   email: z.string().email().optional(),
+  companyname: z.string().optional(),
+  phonenumber: z.string().optional(),
   global_role: z.string().optional(),
   authority_level: z.string().optional(),
   preferred_channel: z.enum(['phone', 'email', 'sms']).optional(),
   do_not_call: z.boolean().optional(),
+  last_ai_contact: z.string().optional(),
 });
 
 /**

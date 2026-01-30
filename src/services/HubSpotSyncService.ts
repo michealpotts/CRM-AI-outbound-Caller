@@ -24,13 +24,16 @@ export class HubSpotSyncService {
   private enabled: boolean = false;
   
   constructor() {
-    const apiKey = process.env.HUBSPOT_API_KEY;
-    if (apiKey) {
-      this.client = new Client({ accessToken: apiKey });
+    // HubSpot now uses access tokens (private app tokens)
+    // Format: pat-ap1-xxxxx-xxxxx-xxxxx-xxxxx
+    const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
+    if (accessToken) {
+      this.client = new Client({ accessToken });
       this.enabled = true;
-      console.log('HubSpot sync enabled');
+      console.log('HubSpot sync enabled with access token');
     } else {
-      console.warn('HubSpot API key not found. HubSpot sync disabled.');
+      console.warn('HubSpot access token not found. HubSpot sync disabled.');
+      console.warn('Set HUBSPOT_ACCESS_TOKEN in .env to enable HubSpot sync');
     }
   }
   
@@ -52,53 +55,77 @@ export class HubSpotSyncService {
     }
     
     try {
-      const dealProperties = {
-        dealname: project.project_name,
-        dealstage: this.mapProjectStatusToDealStage(project.project_status),
-        amount: project.priority_score?.toString() || '0',
-        closedate: project.awarded_date ? new Date(project.awarded_date).getTime().toString() : undefined,
-        // Custom properties
+      const dealProperties: Record<string, string> = {
+        dealname: project.name,
+        dealstage: this.mapProjectStatusToDealStage((project as any).project_status),
+        amount: (project as any).priority_score?.toString() || '0',
         project_id: project.project_id,
-        source_platform: project.source_platform,
-        is_multi_package: project.is_multi_package ? 'true' : 'false',
-        painting_package_status: project.painting_package_status,
         call_suppressed: project.call_suppressed ? 'true' : 'false',
-        last_contacted_at: project.last_contacted_at ? new Date(project.last_contacted_at).getTime().toString() : undefined,
-        next_call_eligible_at: project.next_call_eligible_at ? new Date(project.next_call_eligible_at).getTime().toString() : undefined,
-        // Address fields
-        address: this.formatAddress(project),
       };
+      if (project.awarded_date) {
+        dealProperties.closedate = new Date(project.awarded_date).getTime().toString();
+      }
+      if ((project as any).category) {
+        dealProperties.category = (project as any).category;
+      }
+      if (project.last_contacted_at) {
+        dealProperties.last_contacted_at = new Date(project.last_contacted_at).getTime().toString();
+      }
+      if (project.next_call_eligible_at) {
+        dealProperties.next_call_eligible_at = new Date(project.next_call_eligible_at).getTime().toString();
+      }
+      const address = this.formatAddress(project);
+      if (address) {
+        dealProperties.address = address;
+      }
       
-      // Remove undefined values
-      Object.keys(dealProperties).forEach(key => {
-        if (dealProperties[key as keyof typeof dealProperties] === undefined) {
-          delete dealProperties[key as keyof typeof dealProperties];
+      // Try to update deal using project_id as external ID
+      // Note: HubSpot API v3+ uses different methods, we'll search first then update/create
+      try {
+        // Search for existing deal by project_id custom property
+        const searchResult = await this.client!.crm.deals.searchApi.doSearch({
+          filterGroups: [{
+            filters: [{
+              propertyName: 'project_id',
+              operator: 'EQ',
+              value: project.project_id,
+            }],
+          }],
+          properties: ['id'],
+          limit: 1,
+          sorts: [],
+          after: 0,
+        });
+        
+        if (searchResult.results && searchResult.results.length > 0) {
+          // Update existing deal
+          await this.client!.crm.deals.basicApi.update(
+            searchResult.results[0].id,
+            { properties: dealProperties }
+          );
+        } else {
+          throw new Error('Deal not found');
         }
-      });
-      
-      // Upsert deal using project_id as external ID
-      await this.client!.crm.deals.basicApi.update(
-        project.project_id,
-        { properties: dealProperties },
-        undefined,
-        'project_id' // Use project_id as external ID
-      );
+      } catch (error: any) {
+        // If not found or error, create new deal
+        throw new Error('CREATE_NEW');
+      }
       
       console.log(`Synced project to HubSpot: ${project.project_id}`);
     } catch (error: any) {
       // If deal doesn't exist, create it
-      if (error.code === 404) {
+      if (error.code === 404 || error.message === 'CREATE_NEW') {
         try {
-          const dealProperties = {
-            dealname: project.project_name,
-            dealstage: this.mapProjectStatusToDealStage(project.project_status),
-            amount: project.priority_score?.toString() || '0',
+          const dealProperties: Record<string, string> = {
+            dealname: project.name,
+            dealstage: this.mapProjectStatusToDealStage((project as any).project_status),
+            amount: (project as any).priority_score?.toString() || '0',
             project_id: project.project_id,
-            source_platform: project.source_platform,
-            is_multi_package: project.is_multi_package ? 'true' : 'false',
-            painting_package_status: project.painting_package_status,
             call_suppressed: project.call_suppressed ? 'true' : 'false',
           };
+          if ((project as any).category) {
+            dealProperties.category = (project as any).category;
+          }
           
           await this.client!.crm.deals.basicApi.create({
             properties: dealProperties,
@@ -131,7 +158,7 @@ export class HubSpotSyncService {
       const contactProperties: any = {
         firstname: this.extractFirstName(contact.name),
         lastname: this.extractLastName(contact.name),
-        phone: contact.phone,
+        phone: contact.phonenumber,
         email: contact.email,
         // Custom properties
         global_role: contact.global_role,
@@ -152,18 +179,28 @@ export class HubSpotSyncService {
         }
       });
       
-      // Try to find existing contact by external ID, phone, or email
+      // Try to find existing contact by external ID, phonenumber, or email
       let hubspotContactId: string | null = null;
       
       if (contact.contact_id) {
         try {
-          const result = await this.client!.crm.contacts.basicApi.getById(
-            contact.contact_id,
-            undefined,
-            undefined,
-            'contact_id'
-          );
-          hubspotContactId = result.id;
+          // Search by custom property (contact_id)
+          const searchResult = await this.client!.crm.contacts.searchApi.doSearch({
+            filterGroups: [{
+              filters: [{
+                propertyName: 'contact_id',
+                operator: 'EQ',
+                value: contact.contact_id,
+              }],
+            }],
+            properties: ['id'],
+            limit: 1,
+            sorts: [],
+            after: 0,
+          });
+          if (searchResult.results && searchResult.results.length > 0) {
+            hubspotContactId = searchResult.results[0].id;
+          }
         } catch (e) {
           // Contact not found by external ID, continue
         }
@@ -171,8 +208,23 @@ export class HubSpotSyncService {
       
       if (!hubspotContactId && contact.email) {
         try {
-          const result = await this.client!.crm.contacts.basicApi.getByEmail(contact.email);
-          hubspotContactId = result.id;
+          // Search by email
+          const searchResult = await this.client!.crm.contacts.searchApi.doSearch({
+            filterGroups: [{
+              filters: [{
+                propertyName: 'email',
+                operator: 'EQ',
+                value: contact.email,
+              }],
+            }],
+            properties: ['id'],
+            limit: 1,
+            sorts: [],
+            after: 0,
+          });
+          if (searchResult.results && searchResult.results.length > 0) {
+            hubspotContactId = searchResult.results[0].id;
+          }
         } catch (e) {
           // Contact not found by email, continue
         }
@@ -189,6 +241,7 @@ export class HubSpotSyncService {
         // Create new contact
         await this.client!.crm.contacts.basicApi.create({
           properties: contactProperties,
+          associations: [],
         });
         console.log(`Created new contact in HubSpot`);
       }
@@ -213,28 +266,39 @@ export class HubSpotSyncService {
     }
     
     try {
-      // Get HubSpot deal ID by project_id
-      const deal = await this.client!.crm.deals.basicApi.getById(
-        projectId,
-        undefined,
-        undefined,
-        'project_id'
-      );
+      // Get HubSpot deal ID by project_id (search by custom property)
+      const dealSearch = await this.client!.crm.deals.searchApi.doSearch({
+        filterGroups: [{
+          filters: [{
+            propertyName: 'project_id',
+            operator: 'EQ',
+            value: projectId,
+          }],
+        }],
+        properties: ['id'],
+        limit: 1,
+        sorts: [],
+        after: 0,
+      });
       
-      // Get HubSpot contact ID (try by contact_id, then email, then phone)
-      // Note: This is simplified - in production you'd want to store HubSpot IDs
+      if (!dealSearch.results || dealSearch.results.length === 0) {
+        console.warn(`Deal not found for project_id: ${projectId}`);
+        return;
+      }
+      
+      const dealId = dealSearch.results[0].id;
+      
+      // Get HubSpot contact ID by internal UUID
       const contact = await this.client!.crm.contacts.basicApi.getById(contactId);
       
-      // Associate contact with deal
-      await this.client!.crm.deals.associationsApi.create(
-        deal.id,
-        'contacts',
-        contact.id,
-        [{
-          associationCategory: 'HUBSPOT_DEFINED',
-          associationTypeId: 3, // Deal to Contact association
-        }]
-      );
+      // Associate contact with deal using batch API
+      await this.client!.crm.deals.batchApi.create({
+        inputs: [{
+          from: { id: dealId },
+          to: { id: contact.id },
+          type: 'deal_to_contact',
+        }],
+      } as any);
       
       console.log(`Associated contact ${contactId} with project ${projectId} in HubSpot`);
     } catch (error) {
@@ -254,13 +318,27 @@ export class HubSpotSyncService {
     }
     
     try {
-      // Get HubSpot deal ID by project_id
-      const deal = await this.client!.crm.deals.basicApi.getById(
-        callSession.project_id,
-        undefined,
-        undefined,
-        'project_id'
-      );
+      // Get HubSpot deal ID by project_id (search by custom property)
+      const dealSearch = await this.client!.crm.deals.searchApi.doSearch({
+        filterGroups: [{
+          filters: [{
+            propertyName: 'project_id',
+            operator: 'EQ',
+            value: callSession.project_id,
+          }],
+        }],
+        properties: ['id'],
+        limit: 1,
+        sorts: [],
+        after: 0,
+      });
+      
+      if (!dealSearch.results || dealSearch.results.length === 0) {
+        console.warn(`Deal not found for project_id: ${callSession.project_id}`);
+        return;
+      }
+      
+      const dealId = dealSearch.results[0].id;
       
       // Create a note with call outcome
       const noteBody = `
@@ -278,7 +356,7 @@ ${callSession.transcript ? `Transcript: ${callSession.transcript.substring(0, 50
           hs_timestamp: new Date(callSession.started_at || new Date()).getTime().toString(),
         },
         associations: [{
-          to: { id: deal.id },
+          to: { id: dealId },
           types: [{
             associationCategory: 'HUBSPOT_DEFINED',
             associationTypeId: 214, // Note to Deal association
@@ -305,18 +383,32 @@ ${callSession.transcript ? `Transcript: ${callSession.transcript.substring(0, 50
     
     try {
       if (terminalSession.scope === 'project' && terminalSession.project_id) {
-        // Update deal with terminal state
-        await this.client!.crm.deals.basicApi.update(
-          terminalSession.project_id,
-          {
-            properties: {
-              terminal_state: 'true',
-              terminal_reason: terminalSession.reason,
-            },
-          },
-          undefined,
-          'project_id'
-        );
+        // Find deal by project_id and update with terminal state
+        const dealSearch = await this.client!.crm.deals.searchApi.doSearch({
+          filterGroups: [{
+            filters: [{
+              propertyName: 'project_id',
+              operator: 'EQ',
+              value: terminalSession.project_id,
+            }],
+          }],
+          properties: ['id'],
+          limit: 1,
+          sorts: [],
+          after: 0,
+        });
+        
+        if (dealSearch.results && dealSearch.results.length > 0) {
+          await this.client!.crm.deals.basicApi.update(
+            dealSearch.results[0].id,
+            {
+              properties: {
+                terminal_state: 'true',
+                terminal_reason: terminalSession.reason,
+              },
+            }
+          );
+        }
       } else if (terminalSession.scope === 'contact' && terminalSession.contact_id) {
         // Update contact with terminal state
         await this.client!.crm.contacts.basicApi.update(
@@ -358,13 +450,11 @@ ${callSession.transcript ? `Transcript: ${callSession.transcript.substring(0, 50
    */
   private formatAddress(project: Project): string {
     const parts = [
-      project.address_line1,
-      project.address_line2,
-      project.city,
+      project.address,
+      project.suburb,
       project.state,
-      project.zip_code,
+      project.postcode,
     ].filter(Boolean);
-    
     return parts.join(', ');
   }
   

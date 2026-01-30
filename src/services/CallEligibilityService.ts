@@ -31,7 +31,7 @@ export class CallEligibilityService {
   async isProjectEligible(projectId: string): Promise<{ eligible: boolean; reason?: string }> {
     // Get project
     const projectResult = await query(
-      'SELECT * FROM projects WHERE project_id = $1',
+      'SELECT * FROM crm_projects WHERE project_id = $1',
       [projectId]
     );
     
@@ -98,20 +98,12 @@ export class CallEligibilityService {
     
     // Check 3: Project-specific suppression (if project provided)
     if (projectId) {
-      const projectResult = await query(
-        'SELECT id FROM projects WHERE project_id = $1',
-        [projectId]
+      const projectContactResult = await query(
+        'SELECT suppress_for_project FROM project_contacts WHERE project_id = $1 AND contact_id = $2',
+        [projectId, contactId]
       );
-      
-      if (projectResult.rows.length > 0) {
-        const projectContactResult = await query(
-          'SELECT suppress_for_project FROM project_contacts WHERE project_id = $1 AND contact_id = $2',
-          [projectResult.rows[0].id, contactId]
-        );
-        
-        if (projectContactResult.rows.length > 0 && projectContactResult.rows[0].suppress_for_project) {
-          return { eligible: false, reason: 'Contact suppressed for this project' };
-        }
+      if (projectContactResult.rows.length > 0 && projectContactResult.rows[0].suppress_for_project) {
+        return { eligible: false, reason: 'Contact suppressed for this project' };
       }
     }
     
@@ -145,7 +137,7 @@ export class CallEligibilityService {
     
     // Check project-contact specific terminal session
     const projectResult = await query(
-      'SELECT id FROM projects WHERE project_id = $1',
+      'SELECT id FROM crm_projects WHERE project_id = $1',
       [projectId]
     );
     
@@ -171,29 +163,25 @@ export class CallEligibilityService {
     const queryText = `
       SELECT DISTINCT
         p.project_id,
-        p.project_name,
-        c.id as contact_id,
+        p.name as project_name,
+        c.id as contact_internal_id,
+        pc.contact_id,
         c.name as contact_name,
-        c.phone,
+        c.phonenumber,
         pc.role_for_project,
         pc.role_confidence,
         COALESCE(pc.preferred_channel_project, c.preferred_channel, 'phone') as preferred_channel
-      FROM projects p
-      INNER JOIN project_contacts pc ON p.id = pc.project_id
-      INNER JOIN contacts c ON pc.contact_id = c.id
+      FROM crm_projects p
+      INNER JOIN project_contacts pc ON p.project_id = pc.project_id
+      INNER JOIN contacts c ON c.contact_id = pc.contact_id
       WHERE
-        -- Project not suppressed
         p.call_suppressed = false
-        -- Contact not globally suppressed
         AND c.do_not_call = false
-        -- Project-contact not suppressed
         AND (pc.suppress_for_project = false OR pc.suppress_for_project IS NULL)
-        -- Cooldown period passed
         AND (p.next_call_eligible_at IS NULL OR p.next_call_eligible_at <= NOW())
-        -- Has phone number
-        AND c.phone IS NOT NULL
-        AND c.phone != ''
-      ORDER BY p.priority_score DESC, p.next_call_eligible_at ASC NULLS FIRST
+        AND c.phonenumber IS NOT NULL
+        AND c.phonenumber != ''
+      ORDER BY p.next_call_eligible_at ASC NULLS FIRST
       LIMIT $1
     `;
     
@@ -205,32 +193,26 @@ export class CallEligibilityService {
     for (const row of result.rows) {
       // Check terminal sessions
       const projectResult = await query(
-        'SELECT id FROM projects WHERE project_id = $1',
+        'SELECT id FROM crm_projects WHERE project_id = $1',
         [row.project_id]
       );
-      
       if (projectResult.rows.length === 0) continue;
-      
       const projectInternalId = projectResult.rows[0].id;
-      
-      // Check project terminal
+      const contactInternalId = row.contact_internal_id;
+
       const projectTerminal = await this.terminalService.hasActiveTerminalSession('project', projectInternalId);
       if (projectTerminal.hasTerminal) continue;
-      
-      // Check contact terminal
-      const contactTerminal = await this.terminalService.hasActiveTerminalSession('contact', row.contact_id);
+      const contactTerminal = await this.terminalService.hasActiveTerminalSession('contact', contactInternalId);
       if (contactTerminal.hasTerminal) continue;
-      
-      // Check call fatigue
-      const fatigueCheck = await this.checkCallFatigue(projectInternalId, row.contact_id);
+      const fatigueCheck = await this.checkCallFatigue(projectInternalId, contactInternalId);
       if (!fatigueCheck.allowed) continue;
-      
+
       eligibleCalls.push({
         project_id: row.project_id,
         project_name: row.project_name,
         contact_id: row.contact_id,
         contact_name: row.contact_name,
-        phone: row.phone,
+        phonenumber: row.phonenumber,
         role_for_project: row.role_for_project,
         role_confidence: row.role_confidence ? parseFloat(row.role_confidence) : undefined,
         preferred_channel: row.preferred_channel,

@@ -96,7 +96,7 @@ export class CallSessionService {
       const sessionWithProject = await query(
         `SELECT cs.*, p.project_id as external_project_id
          FROM call_sessions cs
-         INNER JOIN projects p ON cs.project_id = p.id
+         INNER JOIN crm_projects p ON cs.project_id = p.id
          WHERE cs.id = $1`,
         [result.rows[0].id]
       );
@@ -174,7 +174,7 @@ export class CallSessionService {
     const sessionWithProject = await query(
       `SELECT cs.*, p.project_id as external_project_id
        FROM call_sessions cs
-       INNER JOIN projects p ON cs.project_id = p.id
+       INNER JOIN crm_projects p ON cs.project_id = p.id
        WHERE cs.id = $1`,
       [sessionId]
     );
@@ -189,7 +189,7 @@ export class CallSessionService {
     const result = await query(
       `SELECT cs.*, p.project_id as external_project_id
        FROM call_sessions cs
-       INNER JOIN projects p ON cs.project_id = p.id
+       INNER JOIN crm_projects p ON cs.project_id = p.id
        WHERE cs.id = $1`,
       [id]
     );
@@ -213,7 +213,7 @@ export class CallSessionService {
     const result = await query(
       `SELECT cs.*, p.project_id as external_project_id
        FROM call_sessions cs
-       INNER JOIN projects p ON cs.project_id = p.id
+       INNER JOIN crm_projects p ON cs.project_id = p.id
        WHERE cs.project_id = $1
        ORDER BY cs.started_at DESC`,
       [project.id]
@@ -224,7 +224,7 @@ export class CallSessionService {
   
   /**
    * Map database row to CallSession type
-   * Note: Expects row to have external_project_id from JOIN with projects table
+   * Note: Expects row to have external_project_id from JOIN with crm_projects table
    */
   private mapRowToCallSession(row: any): CallSession {
     return {

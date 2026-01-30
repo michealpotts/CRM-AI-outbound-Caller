@@ -4,20 +4,18 @@
 
 export interface Project {
   id?: string;
-  project_id: string; // External ID (unique)
-  project_name: string;
-  address_line1?: string;
-  address_line2?: string;
-  city?: string;
+  project_id: string;
+  name: string;
+  address?: string;
+  suburb?: string;
+  postcode?: string;
   state?: string;
-  zip_code?: string;
-  country?: string;
+  category?: string;
   awarded_date?: string | Date;
-  source_platform?: string;
-  is_multi_package?: boolean;
-  project_status?: string;
-  painting_package_status?: string;
-  priority_score?: number;
+  distance?: number;
+  budget?: string;
+  quotes_due_date?: string | Date;
+  country?: string;
   last_contacted_at?: string | Date;
   next_call_eligible_at?: string | Date;
   call_suppressed?: boolean;
@@ -27,14 +25,16 @@ export interface Project {
 
 export interface Contact {
   id?: string;
-  contact_id?: string; // External ID (optional)
+  contact_id?: string;
   name: string;
-  phone?: string;
   email?: string;
+  companyname?: string;
+  phonenumber?: string;
   global_role?: string;
   authority_level?: string;
   preferred_channel?: 'phone' | 'email' | 'sms';
   do_not_call?: boolean;
+  last_ai_contact?: string | Date;
   created_at?: string | Date;
   updated_at?: string | Date;
 }
@@ -45,6 +45,8 @@ export interface ProjectContact {
   contact_id: string;
   role_for_project?: string;
   role_confidence?: number;
+  est_start_date?: string | Date;
+  est_end_date?: string | Date;
   role_confirmed?: boolean;
   preferred_channel_project?: 'phone' | 'email' | 'sms';
   last_contacted_at?: string | Date;
@@ -89,10 +91,10 @@ export interface TerminalSession {
 
 export interface EligibleCall {
   project_id: string;
-  project_name: string;
+  project_name: string; // display name (from project.name)
   contact_id: string;
   contact_name: string;
-  phone: string;
+  phonenumber: string;
   role_for_project?: string;
   role_confidence?: number;
   preferred_channel?: string;

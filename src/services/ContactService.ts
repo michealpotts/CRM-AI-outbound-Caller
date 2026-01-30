@@ -44,18 +44,15 @@ export class ContactService {
       
       // Strategy 2: Natural key deduplication (if not found by contact_id)
       if (!existingContactId) {
-        // Check by phone
-        if (contact.phone) {
+        if (contact.phonenumber) {
           const phoneResult = await client.query(
-            'SELECT id FROM contacts WHERE phone = $1',
-            [contact.phone]
+            'SELECT id FROM contacts WHERE phonenumber = $1',
+            [contact.phonenumber]
           );
           if (phoneResult.rows.length > 0) {
             existingContactId = phoneResult.rows[0].id;
           }
         }
-        
-        // Check by email (if not found by phone)
         if (!existingContactId && contact.email) {
           const emailResult = await client.query(
             'SELECT id FROM contacts WHERE email = $1',
@@ -74,8 +71,8 @@ export class ContactService {
         let paramIndex = 1;
         
         const fieldsToUpdate: (keyof Contact)[] = [
-          'contact_id', 'name', 'phone', 'email', 'global_role',
-          'authority_level', 'preferred_channel', 'do_not_call'
+          'contact_id', 'name', 'email', 'companyname', 'phonenumber', 'global_role',
+          'authority_level', 'preferred_channel', 'do_not_call', 'last_ai_contact'
         ];
         
         for (const field of fieldsToUpdate) {
@@ -102,10 +99,10 @@ export class ContactService {
         // Insert new contact
         const insertQuery = `
           INSERT INTO contacts (
-            contact_id, name, phone, email, global_role,
-            authority_level, preferred_channel, do_not_call
+            contact_id, name, email, companyname, phonenumber, global_role,
+            authority_level, preferred_channel, do_not_call, last_ai_contact
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
           )
           RETURNING *
         `;
@@ -113,12 +110,14 @@ export class ContactService {
         const result = await client.query(insertQuery, [
           contact.contact_id || null,
           contact.name,
-          contact.phone || null,
           contact.email || null,
+          contact.companyname || null,
+          contact.phonenumber || null,
           contact.global_role || null,
           contact.authority_level || null,
           contact.preferred_channel || null,
           contact.do_not_call || false,
+          contact.last_ai_contact || null,
         ]);
         
         await client.query('COMMIT');
@@ -167,10 +166,10 @@ export class ContactService {
   /**
    * Get contact by phone (for deduplication)
    */
-  async getContactByPhone(phone: string): Promise<Contact | null> {
+  async getContactByPhone(phonenumber: string): Promise<Contact | null> {
     const result = await query(
-      'SELECT * FROM contacts WHERE phone = $1',
-      [phone]
+      'SELECT * FROM contacts WHERE phonenumber = $1',
+      [phonenumber]
     );
     
     if (result.rows.length === 0) {
@@ -204,12 +203,14 @@ export class ContactService {
       id: row.id,
       contact_id: row.contact_id,
       name: row.name,
-      phone: row.phone,
       email: row.email,
+      companyname: row.companyname,
+      phonenumber: row.phonenumber,
       global_role: row.global_role,
       authority_level: row.authority_level,
       preferred_channel: row.preferred_channel,
       do_not_call: row.do_not_call,
+      last_ai_contact: row.last_ai_contact,
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
